@@ -5,6 +5,7 @@
  */
 
 #include <stdio.h>
+#include <stdlib.h>
 #include "freertos/FreeRTOS.h"
 #include "i2c_bus.h"
 #include "bme280.h"
@@ -147,36 +148,45 @@ esp_err_t bme280_read_coefficients(bme280_handle_t sensor)
         return ESP_FAIL;
     }
     sens->data_t.dig_p9 = (int16_t) data16;
-    if (i2c_bus_read_byte(sens->i2c_dev, BME280_REGISTER_DIG_H1, &data) != ESP_OK) {
-        return ESP_FAIL;
+    if (sens->has_humidity) {
+        if (i2c_bus_read_byte(sens->i2c_dev, BME280_REGISTER_DIG_H1, &data) != ESP_OK) {
+            return ESP_FAIL;
+        }
+        sens->data_t.dig_h1 = data;
+        if (bme280_read_uint16_le(sensor, BME280_REGISTER_DIG_H2, &data16) != ESP_OK) {
+            return ESP_FAIL;
+        }
+        sens->data_t.dig_h2 = (int16_t) data16;
+        if (i2c_bus_read_byte(sens->i2c_dev, BME280_REGISTER_DIG_H3, &data) != ESP_OK) {
+            return ESP_FAIL;
+        }
+        sens->data_t.dig_h3 = data;
+        if (i2c_bus_read_byte(sens->i2c_dev, BME280_REGISTER_DIG_H4, &data) != ESP_OK) {
+            return ESP_FAIL;
+        }
+        if (i2c_bus_read_byte(sens->i2c_dev, BME280_REGISTER_DIG_H4 + 1, &data1) != ESP_OK) {
+            return ESP_FAIL;
+        }
+        sens->data_t.dig_h4 = (data << 4) | (data1 & 0xF);
+        if (i2c_bus_read_byte(sens->i2c_dev, BME280_REGISTER_DIG_H5 + 1, &data) != ESP_OK) {
+            return ESP_FAIL;
+        }
+        if (i2c_bus_read_byte(sens->i2c_dev, BME280_REGISTER_DIG_H5, &data1) != ESP_OK) {
+            return ESP_FAIL;
+        }
+        sens->data_t.dig_h5 = (data << 4) | (data1 >> 4);
+        if (i2c_bus_read_byte(sens->i2c_dev, BME280_REGISTER_DIG_H6, &data) != ESP_OK) {
+            return ESP_FAIL;
+        }
+        sens->data_t.dig_h6 = (int8_t) data;
+    } else {
+        sens->data_t.dig_h1 = 0;
+        sens->data_t.dig_h2 = 0;
+        sens->data_t.dig_h3 = 0;
+        sens->data_t.dig_h4 = 0;
+        sens->data_t.dig_h5 = 0;
+        sens->data_t.dig_h6 = 0;
     }
-    sens->data_t.dig_h1 = data;
-    if (bme280_read_uint16_le(sensor, BME280_REGISTER_DIG_H2, &data16) != ESP_OK) {
-        return ESP_FAIL;
-    }
-    sens->data_t.dig_h2 = (int16_t) data16;
-    if (i2c_bus_read_byte(sens->i2c_dev, BME280_REGISTER_DIG_H3, &data) != ESP_OK) {
-        return ESP_FAIL;
-    }
-    sens->data_t.dig_h3 = data;
-    if (i2c_bus_read_byte(sens->i2c_dev, BME280_REGISTER_DIG_H4, &data) != ESP_OK) {
-        return ESP_FAIL;
-    }
-    if (i2c_bus_read_byte(sens->i2c_dev, BME280_REGISTER_DIG_H4 + 1, &data1) != ESP_OK) {
-        return ESP_FAIL;
-    }
-    sens->data_t.dig_h4 = (data << 4) | (data1 & 0xF);
-    if (i2c_bus_read_byte(sens->i2c_dev, BME280_REGISTER_DIG_H5 + 1, &data) != ESP_OK) {
-        return ESP_FAIL;
-    }
-    if (i2c_bus_read_byte(sens->i2c_dev, BME280_REGISTER_DIG_H5, &data1) != ESP_OK) {
-        return ESP_FAIL;
-    }
-    sens->data_t.dig_h5 = (data << 4) | (data1 >> 4);
-    if (i2c_bus_read_byte(sens->i2c_dev, BME280_REGISTER_DIG_H6, &data) != ESP_OK) {
-        return ESP_FAIL;
-    }
-    sens->data_t.dig_h6 = (int8_t) data;
     return ESP_OK;
 }
 
@@ -191,8 +201,10 @@ esp_err_t bme280_set_sampling(bme280_handle_t sensor, bme280_sensor_mode mode, b
     sens->config_t.t_sb = duration;
     // you must make sure to also set REGISTER_CONTROL after setting the
     // CONTROLHUMID register, otherwise the values won't be applied (see DS 5.4.3)
-    if (i2c_bus_write_byte(sens->i2c_dev, BME280_REGISTER_CONTROLHUMID, bme280_getctrl_hum(sensor)) != ESP_OK) {
-        return ESP_FAIL;
+    if (sens->has_humidity) {
+        if (i2c_bus_write_byte(sens->i2c_dev, BME280_REGISTER_CONTROLHUMID, bme280_getctrl_hum(sensor)) != ESP_OK) {
+            return ESP_FAIL;
+        }
     }
     if (i2c_bus_write_byte(sens->i2c_dev, BME280_REGISTER_CONFIG, bme280_getconfig(sensor)) != ESP_OK) {
         return ESP_FAIL;
@@ -212,8 +224,13 @@ esp_err_t bme280_default_init(bme280_handle_t sensor)
         ESP_LOGI("BME280:", "bme280_default_init->bme280_read_byte ->BME280_REGISTER_CHIPID failed!!!!:%x", chipid);
         return ESP_FAIL;
     }
-    if (chipid != BME280_DEFAULT_CHIPID) {
-        ESP_LOGI("BME280:", "bme280_default_init->BME280_DEFAULT_CHIPID:%x", chipid);
+    if (chipid == BME280_DEFAULT_CHIPID) {
+        sens->has_humidity = true;
+    } else if (chipid == BMP280_DEFAULT_CHIPID) {
+        sens->has_humidity = false;
+        ESP_LOGI("BME280:", "Detected BMP280 chip id: 0x%02x", chipid);
+    } else {
+        ESP_LOGI("BME280:", "Unknown chip id: 0x%02x", chipid);
         return ESP_FAIL;
     }
     // reset the sens using soft-reset, this makes sure the IIR is off, etc.

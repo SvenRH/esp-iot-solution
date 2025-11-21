@@ -11,6 +11,7 @@
 
 #define BME280_I2C_ADDRESS_DEFAULT   (0x76)     /*The device's I2C address is either 0x76 or 0x77.*/
 #define BME280_DEFAULT_CHIPID        (0x60)
+#define BMP280_DEFAULT_CHIPID        (0x58)
 
 #define WRITE_BIT      I2C_MASTER_WRITE         /*!< I2C master write */
 #define READ_BIT       I2C_MASTER_READ          /*!< I2C master read */
@@ -187,6 +188,7 @@ typedef struct {
     bme280_config_t config_t;
     bme280_ctrl_meas_t ctrl_meas_t;
     bme280_ctrl_hum_t ctrl_hum_t;
+    bool has_humidity;
     int32_t t_fine;
 } bme280_dev_t;
 
